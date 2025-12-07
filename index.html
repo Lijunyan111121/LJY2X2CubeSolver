@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>LJY2 X 2CubeSolver</title>
+    <style>
+        /* 全局样式 */
+        body { 
+            margin: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif; 
+            background: rgb(245, 247, 250); 
+            color: rgb(44, 62, 80); 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            min-height: 100vh; 
+            padding: 16px 10px; 
+            box-sizing: border-box; 
+            overflow-x: hidden; 
+            overflow-y: auto; 
+            touch-action: auto; 
+        }
+
+        /* 场景容器 */
+        .scene { 
+            width: 150px; 
+            height: 150px; 
+            perspective: 1000px; 
+            margin: 110px 0 12px 0; 
+            /* 关键：允许触摸操作 */
+            touch-action: none; 
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        /* 魔方本体 */
+        .cube { 
+            width: 100%; 
+            height: 100%; 
+            position: relative; 
+            transform-style: preserve-3d; 
+            transform: rotateX(var(--rotate-x, -25deg)) rotateY(var(--rotate-y, -35deg)); 
+            cursor: grab; 
+            background: rgba(0,0,0,0); 
+            touch-action: none; 
+        }
+        .cube:active { cursor: grabbing; }
+
+        /* 角块与贴纸 */
+        .corner { position: absolute; top: 50%; left: 50%; width: 75px; height: 75px; transform-style: preserve-3d; transform-origin: center; will-change: transform; }
+        .corner-inner { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform-style: preserve-3d; transform-origin: center; will-change: transform; pointer-events: none; }
+        .corner-inner > .sticker { pointer-events: auto; }
+
+        .sticker { position: absolute; border: none; border-radius: 2px; background-color: rgb(20, 20, 20); box-sizing: border-box; opacity: 1; transition: border-color 0.2s; transform-style: preserve-3d; backface-visibility: hidden; -webkit-backface-visibility: hidden; width: calc(100% + 1px); height: calc(100% + 1px); }
+        .sticker.fixed { border-color: rgb(0, 0, 0); }
+
+        /* 色板 */
+        #color-palette { display: flex; gap: 10px; justify-content: center; margin: 70px 0 18px 0; flex-wrap: wrap; }
+        .palette-color { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid rgb(0, 0, 0); transition: box-shadow 0.3s; }
+        .palette-color.selected { box-shadow: 0 0 0 2px rgba(41, 128, 185, 0.8) inset, 0 0 6px rgba(41, 128, 185, 0.6); }
+
+        /* 按钮组 */
+        .btn-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 50px; }
+        button { background: rgb(52, 152, 219); color: white; border: none; border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer; transition: background-color 0.3s; }
+        button:disabled { background: rgb(149, 165, 166); cursor: default; }
+        button:not(:disabled):hover { background: rgb(41, 128, 185); }
+
+        /* 控制区域 */
+        .controls { display: flex; align-items: center; gap: 10px; margin-top: 30px; }
+        .controls label { font-size: 13px; color: rgb(52, 73, 94); }
+        .controls input[type="number"] { width: 90px; padding: 6px 8px; border: 1px solid rgb(189, 195, 199); border-radius: 6px; font-size: 13px; outline: none; background: white; color: rgb(52, 73, 94); }
+        .controls input[type="number"]:focus { border-color: rgb(41, 128, 185); }
+
+        /* 结果显示 */
+        #result { margin-top: 16px; width: 92vw; max-width: 480px; background: rgb(236, 240, 241); border-radius: 8px; padding: 10px; min-height: 40px; white-space: pre-wrap; word-break: break-word; font-size: 13px; color: rgb(52, 73, 94); }
+        .status { margin-top: 6px; color: rgb(127, 140, 141); font-size: 12px; text-align: center; }
+
+        /* 颜色定义 */
+        .color-Y { background-color: rgb(255, 235, 59); }
+        .color-W { background-color: rgb(250, 250, 250); }
+        .color-B { background-color: rgb(33, 150, 243); }
+        .color-G { background-color: rgb(76, 175, 80); }
+        .color-O { background-color: rgb(255, 152, 0); }
+        .color-R { background-color: rgb(244, 67, 54); }
+
+        /* 动画元素 */
+        .rotator { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform-style: preserve-3d; transform-origin: 50% 50% 0; will-change: transform; pointer-events: none; }
+        #confetti-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+        }
+    </style>
+</head>
+<body>
+    <h1 style="font-size:16px; margin: 6px 0;">LJY2 X 2CubeSolver</h1>
+    <div id="instructions" style="max-width: 480px; text-align: center; font-size:12px; color:rgb(127, 140, 141);">
+        <p>请在下方3D魔方上填入颜色，或点击随机打乱。</p>
+        <p>固定角块白橙蓝已预设在后下左位置。</p>
+    </div>
+
+    <div class="scene">
+        <div class="cube" id="cube"></div>
+    </div>
+
+    <div id="color-palette" aria-label="颜色选择">
+        <div class="palette-color color-Y" data-color="Y" title="黄"></div>
+        <div class="palette-color color-W" data-color="W" title="白"></div>
+        <div class="palette-color color-B" data-color="B" title="蓝"></div>
+        <div class="palette-color color-O" data-color="O" title="橙"></div>
+        <div class="palette-color color-R" data-color="R" title="红"></div>
+        <div class="palette-color color-G" data-color="G" title="绿"></div>
+    </div>
+
+    <div class="btn-row">
+        <button id="scramble-btn">随机打乱</button>
+        <button id="solve-btn" disabled>求解魔方</button>
+        <button id="reset-btn">重新开始</button>
+    </div>
+
+    <div class="controls">
+        <label for="interval-input">播放间隔(秒)</label>
+        <input id="interval-input" type="number" min="0" step="0.1" value="0.5" />
+        <button id="replay-btn" disabled>重播动画</button>
+    </div>
+
+    <div id="result" aria-live="polite" aria-atomic="true"></div>
+    <div class="status" id="status"></div>
+    
+    <canvas id="confetti-canvas"></canvas>
+
+<script>
+(function(){
+    // === DOM 元素初始化 ===
+    const cube = document.getElementById('cube');
+    const colorPalette = document.getElementById('color-palette');
+    const solveBtn = document.getElementById('solve-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const scrambleBtn = document.getElementById('scramble-btn');
+    const resultDiv = document.getElementById('result');
+    const statusDiv = document.getElementById('status');
+    const intervalInput = document.getElementById('interval-input');
+    const replayBtn = document.getElementById('replay-btn');
+
+    // === 全局变量 ===
+    let FACE_ROTATE_MS = 600; 
+    let selectedColor = null; // 当前选中的画笔颜色
+    // 拖拽相关
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let currentRotateX = -25, currentRotateY = -35; 
+    let dragStartRotateX = -25, dragStartRotateY = -35;
+    // 触摸点击判断
+    let touchStartX = 0, touchStartY = 0;
+    let isTouchTap = false;
+    let touchTarget = null;
+    // 动画状态
+    let isAnimating = false;
+    let animationStop = false;
+
+    // 尺寸与偏移
+    let sceneSize = 0, cornerSize = 0, stickerSize = 0;
+    let CORNER_OFFSET = 0, STICKER_OFFSET = 0;
+    const LAYER_GAP = 3; 
+
+    // 还原与状态
+    let savedInitialPieces = null;
+    let lastAnimationSteps = null;
+    let logicState = new Array(24).fill('W'); 
+
+    // === 魔方数据结构 ===
+    const posCoord = {
+        UBL: [-1, -1, -1], UBR: [ 1, -1, -1], UFL: [-1, -1,  1], UFR: [ 1, -1,  1],
+        DBL: [-1,  1, -1], DBR: [ 1,  1, -1], DFL: [-1,  1,  1], DFR: [ 1,  1,  1]
+    };
+    const posOrders = {
+        R: ['UFR', 'UBR', 'DBR', 'DFR'],
+        U: ['UFR', 'UBR', 'UBL', 'UFL'],
+        F: ['UFL', 'UFR', 'DFR', 'DFL']
+    };
+    const fixedStickers = { 20: 'W', 19: 'O', 6: 'B' }; // 固定角块颜色
+    const pieces = {};
+    const initialColors = {
+        0: 'Y', 1: 'Y', 2: 'Y', 3: 'Y',
+        4: 'B', 5: 'B', 6: 'B', 7: 'B', 
+        8: 'R', 9: 'R', 10:'R', 11:'R', 
+        12:'G', 13:'G', 14:'G', 15:'G', 
+        16:'O', 17:'O', 18:'O', 19:'O', 
+        20:'W', 21:'W', 22:'W', 23:'W'  
+    };
+    const SOLVER_INDICES = [2, 8, 5, 0, 17, 4, 1, 16, 13, 3, 9, 12, 22, 10, 7, 20, 19, 6, 21, 18, 15, 23, 11, 14];
+
+    // === 逻辑计算函数 ===
+    function toSolverFormat(arr24) {
+        let res = new Array(24);
+        for(let i=0;i<24;i++) res[i] = arr24[SOLVER_INDICES[i]];
+        return res;
+    }
+    function fromSolverFormat(solverArr) {
+        let res = new Array(24);
+        for(let i=0;i<24;i++) res[SOLVER_INDICES[i]] = solverArr[i];
+        return res;
+    }
+    function logicRotR(st) {
+        let n = [...st];
+        let res = [];
+        res.push(...n.slice(0,6));
+        res.push(n[10], n[9], n[11]);
+        res.push(n[22], n[21], n[23]);
+        res.push(...n.slice(12,18));
+        res.push(n[7]); res.push(n[6], n[8]);
+        res.push(n[19]); res.push(n[18], n[20]);
+        return res;
+    }
+    function logicRotU(st) {
+        let n = [...st];
+        let res = [];
+        res.push(n[9], n[11], n[10]);
+        res.push(n[0], n[2], n[1]);
+        res.push(n[3], n[5], n[4]);
+        res.push(n[6], n[8], n[7]);
+        res.push(...n.slice(12, 24));
+        return res;
+    }
+    function logicRotF(st) {
+        let n = [...st];
+        let res = [];
+        res.push(n[14], n[13], n[12]);
+        res.push(...n.slice(3,9));
+        res.push(n[2], n[1], n[0]);
+        res.push(n[23], n[22], n[21]);
+        res.push(...n.slice(15,21));
+        res.push(n[11], n[10], n[9]);
+        return res;
+    }
+    function applyLogicMove(stateUnfolded, move) {
+        let s = toSolverFormat(stateUnfolded);
+        let f = move[0];
+        let count = 1;
+        if(move.endsWith('2')) count=2;
+        else if(move.endsWith("'")) count=3;
+        for(let k=0; k<count; k++){
+            if(f==='R') s = logicRotR(s);
+            else if(f==='U') s = logicRotU(s);
+            else if(f==='F') s = logicRotF(s);
+        }
+        return fromSolverFormat(s);
+    }
+
+    // === 3D 渲染核心 ===
+    function setupSizes() {
+        sceneSize = Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.26);
+        if (sceneSize < 120) sceneSize = 120;
+        if (sceneSize > 220) sceneSize = 220;
+
+        cornerSize = Math.round(sceneSize / 2);
+        stickerSize = cornerSize; 
+        CORNER_OFFSET = Math.round(cornerSize / 2) + LAYER_GAP;
+        STICKER_OFFSET = Math.round(cornerSize / 2);
+
+        const sceneEl = document.querySelector('.scene');
+        sceneEl.style.width = sceneSize + 'px';
+        sceneEl.style.height = sceneSize + 'px';
+        sceneEl.style.perspective = Math.round(sceneSize * 6.25) + 'px';
+
+        updateCubeRotationCSS();
+
+        const cornerEls = cube.querySelectorAll('.corner');
+        cornerEls.forEach(el => {
+            el.style.width = cornerSize + 'px';
+            el.style.height = cornerSize + 'px';
+            el.style.marginLeft = (-cornerSize / 2) + 'px';
+            el.style.marginTop = (-cornerSize / 2) + 'px';
+        });
+        const innerEls = cube.querySelectorAll('.corner-inner');
+        innerEls.forEach(el => {
+            el.style.width = cornerSize + 'px';
+            el.style.height = cornerSize + 'px';
+        });
+        Object.keys(pieces).forEach(pid => updatePieceTransform(pieces[pid]));
+    }
+
+    function updateCubeRotationCSS() {
+        cube.style.setProperty('--rotate-y', currentRotateY + 'deg');
+        cube.style.setProperty('--rotate-x', currentRotateX + 'deg');
+    }
+
+    function makeSticker(faceIndex, transformText) {
+        const stickerEl = document.createElement('div');
+        stickerEl.className = 'sticker';
+        stickerEl.dataset.index = faceIndex;
+        // 稍微推出来一点避免z-fighting
+        const pushed = transformText.replace('translateZ(' + STICKER_OFFSET + 'px)', 'translateZ(' + (STICKER_OFFSET + 0.2) + 'px)');
+        stickerEl.style.transform = pushed;
+        
+        if (fixedStickers[faceIndex]) {
+            const color = fixedStickers[faceIndex];
+            stickerEl.classList.add('color-' + color, 'fixed');
+            stickerEl.dataset.color = color;
+            logicState[faceIndex] = color;
+        } else {
+            logicState[faceIndex] = ''; 
+        }
+        return stickerEl;
+    }
+
+    // 四元数工具
+    function quatIdentity() { return { x: 0, y: 0, z: 0, w: 1 }; }
+    function quatNormalize(q) {
+        const s = Math.sqrt(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
+        if (s === 0) return quatIdentity();
+        return { x: q.x/s, y: q.y/s, z: q.z/s, w: q.w/s };
+    }
+    function quatFromAxisAngle(axis, angleDeg) {
+        const rad = angleDeg * Math.PI / 180;
+        const half = rad / 2;
+        const s = Math.sin(half);
+        return quatNormalize({ x: axis[0] * s, y: axis[1] * s, z: axis[2] * s, w: Math.cos(half) });
+    }
+    function quatMultiply(a, b) {
+        return quatNormalize({
+            w: a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
+            x: a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+            y: a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+            z: a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w
+        });
+    }
+    function quatToAxisAngle(q) {
+        const qn = quatNormalize({ x: q.x, y: q.y, z: q.z, w: q.w });
+        const qw = Math.max(-1, Math.min(1, qn.w));
+        let angle = 2 * Math.acos(qw);
+        const s = Math.sqrt(1 - qw*qw);
+        let ax = 1, ay = 0, az = 0;
+        if (s > 0.0001) { ax = qn.x / s; ay = qn.y / s; az = qn.z / s; }
+        let angleDeg = angle * 180 / Math.PI;
+        if (angleDeg > 180) { angleDeg = 360 - angleDeg; ax = -ax; ay = -ay; az = -az; }
+        return { axis: [ax, ay, az], angleDeg: angleDeg };
+    }
+
+    function createPiece(id, faces) {
+        const cornerEl = document.createElement('div');
+        cornerEl.className = 'corner';
+        cornerEl.dataset.pos = id;
+        const innerEl = document.createElement('div');
+        innerEl.className = 'corner-inner';
+        faces.forEach(face => { innerEl.appendChild(makeSticker(face.i, face.t)); });
+        cornerEl.appendChild(innerEl);
+        pieces[id] = { el: cornerEl, inner: innerEl, pos: id, rot: quatIdentity() };
+        cube.appendChild(cornerEl);
+    }
+
+    function initializeCube3D() {
+        // 创建8个角块
+        createPiece('UBL', [{i:0,t:'rotateX(90deg) translateZ('+STICKER_OFFSET+'px)'},{i:17,t:'rotateY(180deg) translateZ('+STICKER_OFFSET+'px)'},{i:4,t:'rotateY(-90deg) translateZ('+STICKER_OFFSET+'px)'}]);
+        createPiece('UBR', [{i:1,t:'rotateX(90deg) translateZ('+STICKER_OFFSET+'px)'},{i:16,t:'rotateY(180deg) translateZ('+STICKER_OFFSET+'px)'},{i:13,t:'rotateY(90deg) translateZ('+STICKER_OFFSET+'px)'}]);
+        createPiece('UFL', [{i:2,t:'rotateX(90deg) translateZ('+STICKER_OFFSET+'px)'},{i:8,t:'translateZ('+STICKER_OFFSET+'px)'},{i:5,t:'rotateY(-90deg) translateZ('+STICKER_OFFSET+'px)'}]);
+        createPiece('UFR', [{i:3,t:'rotateX(90deg) translateZ('+STICKER_OFFSET+'px)'},{i:9,t:'translateZ('+STICKER_OFFSET+'px)'},{i:12,t:'rotateY(90deg) translateZ('+STICKER_OFFSET+'px)'}]);
+        createPiece('DBL', [{i:20,t:'rotateX(-90deg) translateZ('+STICKER_OFFSET+'px)'},{i:19,t:'rotateY(180deg) translateZ('+STICKER_OFFSET+'px)'},{i:6,t:'rotateY(-90deg) translateZ('+STICKER_OFFSET+'px)'}]);
+        createPiece('DBR', [{i:21,t:'rotateX(-90deg) translateZ('+STICKER_OFFSET+'px)'},{i:18,t:'rotateY(180deg) translateZ('+STICKER_OFFSET+'px)'},{i:15,t:'rotateY(90deg) translateZ('+STICKER_OFFSET+'px)'}]);
+        createPiece('DFL', [{i:22,t:'rotateX(-90deg) translateZ('+STICKER_OFFSET+'px)'},{i:10,t:'translateZ('+STICKER_OFFSET+'px)'},{i:7,t:'rotateY(-90deg) translateZ('+STICKER_OFFSET+'px)'}]);
+        createPiece('DFR', [{i:23,t:'rotateX(-90deg) translateZ('+STICKER_OFFSET+'px)'},{i:11,t:'translateZ('+STICKER_OFFSET+'px)'},{i:14,t:'rotateY(90deg) translateZ('+STICKER_OFFSET+'px)'}]);
+    }
+
+    function updatePieceTransform(piece) {
+        const coord = posCoord[piece.pos];
+        const tx = coord[0] * CORNER_OFFSET;
+        const ty = coord[1] * CORNER_OFFSET;
+        const tz = coord[2] * CORNER_OFFSET;
+        const aa = quatToAxisAngle(piece.rot);
+        piece.el.style.transform = 'translate3d(' + tx + 'px,' + ty + 'px,' + tz + 'px)';
+        piece.inner.style.transform = 'rotate3d(' + aa.axis[0] + ',' + aa.axis[1] + ',' + aa.axis[2] + ',' + aa.angleDeg + 'deg)';
+    }
+
+    /* =========================================
+       交互事件处理 (修复手机填色问题)
+       ========================================= */
+    
+    // 公共填色逻辑
+    function tryColorSticker(targetEl) {
+        if (!targetEl || !targetEl.classList.contains('sticker') || targetEl.classList.contains('fixed')) return;
+        if (!selectedColor) { alert('请先从色板选择颜色'); return; }
+        
+        targetEl.dataset.color = selectedColor;
+        // 清除旧颜色类并添加新颜色类
+        const classes = targetEl.className.split(' ').filter(c => !c.startsWith('color-'));
+        classes.push('color-' + selectedColor);
+        targetEl.className = classes.join(' ');
+        
+        logicState[targetEl.dataset.index] = selectedColor;
+        checkAllFilled();
+    }
+
+    function handleStart(x, y) {
+        if (isAnimating) return;
+        isDragging = true;
+        startX = x;
+        startY = y;
+        dragStartRotateX = currentRotateX;
+        dragStartRotateY = currentRotateY;
+        cube.style.transition = 'none';
+        isTouchTap = true; // 假设是一次点击，直到移动超过阈值
+    }
+
+    function handleMove(x, y) {
+        if (!isDragging || isAnimating) return;
+        const deltaX = x - startX;
+        const deltaY = y - startY;
+
+        // 如果移动距离超过5px，则视为拖拽旋转，不是点击
+        if (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5) {
+            isTouchTap = false;
+            currentRotateY = dragStartRotateY + deltaX * 0.5;
+            currentRotateX = dragStartRotateX - deltaY * 0.5;
+            updateCubeRotationCSS();
+        }
+    }
+
+    function handleEnd() {
+        if (isDragging) {
+            isDragging = false;
+            cube.style.transition = '';
+        }
+    }
+
+    // 鼠标事件 (桌面端正常逻辑)
+    cube.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        handleStart(e.pageX, e.pageY);
+    });
+    window.addEventListener('mousemove', (e) => handleMove(e.pageX, e.pageY));
+    window.addEventListener('mouseup', handleEnd);
+    cube.addEventListener('click', (e) => {
+        // 桌面端的点击事件
+        if(!isDragging && !isAnimating) tryColorSticker(e.target);
+    });
+
+    // 触摸事件 (修复方案)
+    cube.addEventListener('touchstart', (e) => {
+        if(e.touches.length > 0) {
+            e.preventDefault(); // 必须阻止默认行为以防止页面滚动
+            // 保存当前触摸的目标元素，用于稍后判定点击
+            touchTarget = e.target;
+            handleStart(e.touches[0].pageX, e.touches[0].pageY);
+        }
+    }, { passive: false });
+
+    window.addEventListener('touchmove', (e) => {
+        if(isDragging && e.touches.length > 0) {
+            e.preventDefault();
+            handleMove(e.touches[0].pageX, e.touches[0].pageY);
+        }
+    }, { passive: false });
+
+    window.addEventListener('touchend', (e) => {
+        // 如果手指抬起时判断为Tap（位移极小），则手动触发填色
+        if (isDragging && isTouchTap && touchTarget) {
+            tryColorSticker(touchTarget);
+        }
+        handleEnd();
+    });
+
+    // === 色板选择 ===
+    colorPalette.addEventListener('click', e => {
+        const t = e.target;
+        if (!t.classList.contains('palette-color')) return;
+        const sel = colorPalette.querySelector('.selected');
+        if (sel) sel.classList.remove('selected');
+        t.classList.add('selected');
+        selectedColor = t.dataset.color;
+    });
+
+    function checkAllFilled() {
+        const allTiles = document.querySelectorAll('.sticker:not(.fixed)');
+        const isFull = Array.from(allTiles).every(tile => !!tile.dataset.color);
+        solveBtn.disabled = !isFull;
+        return isFull;
+    }
+
+    function getLogicCubeState() {
+        return logicState.join('');
+    }
+
+    // === 动画系统 ===
+    function parseMove(m) {
+        const face = m[0];
+        let amount = 1; let dir = 1;
+        if (m.endsWith('2')) amount = 2;
+        else if (m.endsWith("'")) dir = -1;
+        if (face === 'U') dir = -dir; 
+        return { face, amount, dir };
+    }
+
+    function cyclePositions(face, dir, amount) {
+        const order = posOrders[face].slice();
+        const shift = ((dir === -1) ? -amount : amount);
+        const mapping = {};
+        for (let i = 0; i < 4; i++) {
+            mapping[order[i]] = order[(i + shift + 4) % 4];
+        }
+        return mapping;
+    }
+
+    function axisVectorForFace(face) {
+        if (face === 'R') return [1, 0, 0];
+        if (face === 'U') return [0, 1, 0];
+        return [0, 0, 1]; 
+    }
+
+    function animateMove(move, duration) {
+        return new Promise(resolve => {
+            const cfg = parseMove(move);
+            const { face, amount, dir } = cfg;
+            const angle = 90 * amount * dir;
+            const axis = axisVectorForFace(face);
+            const facePositions = posOrders[face];
+            const qMove = quatFromAxisAngle(axis, angle);
+            const mapping = cyclePositions(face, dir, amount);
+            const originalPieces = facePositions.map(p => pieces[p]);
+
+            const rotator = document.createElement('div');
+            rotator.className = 'rotator';
+            const effDuration = (typeof duration === 'number') ? duration : FACE_ROTATE_MS;
+            
+            rotator.style.transition = (effDuration > 20) ? ('transform ' + effDuration + 'ms ease-in-out') : 'none';
+            rotator.style.transform = 'none';
+            cube.appendChild(rotator);
+            facePositions.forEach(p => { rotator.appendChild(pieces[p].el); });
+
+            let finished = false;
+            function done() {
+                if (finished) return;
+                finished = true;
+                facePositions.forEach((fromPos, idx) => {
+                    const toPos = mapping[fromPos];
+                    const piece = originalPieces[idx];
+                    piece.pos = toPos;
+                    piece.rot = quatMultiply(qMove, piece.rot);
+                });
+                facePositions.forEach((fromPos, idx) => { pieces[mapping[fromPos]] = originalPieces[idx]; });
+                facePositions.forEach(fromPos => {
+                    const toPos = mapping[fromPos];
+                    const piece = pieces[toPos];
+                    piece.el.style.transition = 'none';
+                    piece.inner.style.transition = 'none';
+                    cube.appendChild(piece.el);
+                    updatePieceTransform(piece);
+                });
+                if (rotator.parentNode === cube) cube.removeChild(rotator);
+                requestAnimationFrame(() => {
+                    facePositions.forEach(p => {
+                        pieces[mapping[p]].el.style.transition = '';
+                        pieces[mapping[p]].inner.style.transition = '';
+                    });
+                    resolve();
+                });
+            }
+
+            if(effDuration <= 20) {
+                done();
+            } else {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        rotator.style.transform = 'rotate3d(' + axis[0] + ',' + axis[1] + ',' + axis[2] + ',' + angle + 'deg)';
+                    });
+                });
+                rotator.addEventListener('transitionend', e => { if (e.propertyName === 'transform') done(); });
+                setTimeout(done, effDuration + 50);
+            }
+        });
+    }
+
+    function delay(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+    // === 庆祝动画 (Canvas) ===
+    function celebrate() {
+        const canvas = document.getElementById('confetti-canvas');
+        const ctx = canvas.getContext('2d');
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+        
+        const particles = [];
+        const colors = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4CAF50', '#8BC34A', '#CDDC39', '#FFEB3B', '#FFC107', '#FF9800', '#FF5722'];
+        let flashAlpha = 1;
+
+        function createParticle(x, y) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 12 + 6; 
+            return {
+                x: x, y: y,
+                vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 2.5,
+                color: colors[Math.floor(Math.random() * colors.length)],
+                size: Math.random() * 10 + 5,
+                gravity: 0.2, drag: 0.97, alpha: 1,
+                rotation: Math.random() * 360, rotSpeed: Math.random() * 12 - 6,
+                scale: 1, scaleSpeed: Math.random() * 0.08 + 0.04,
+                trail: []
+            };
+        }
+
+        const centerX = width / 2;
+        const centerY = height * 0.6;
+        for (let i = 0; i < 150; i++) particles.push(createParticle(centerX, centerY));
+        setTimeout(() => { for(let i=0; i<75; i++) particles.push(createParticle(centerX - 120, centerY - 60)); }, 150);
+        setTimeout(() => { for(let i=0; i<75; i++) particles.push(createParticle(centerX + 120, centerY - 60)); }, 300);
+        
+        let animationId;
+        let lastTime = 0;
+        function render(currentTime) {
+            if (currentTime - lastTime > 33) { 
+                ctx.clearRect(0, 0, width, height);
+                if (flashAlpha > 0) {
+                    const flashGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, Math.max(width, height) / 2);
+                    flashGradient.addColorStop(0, `rgba(255, 215, 0, ${flashAlpha})`);
+                    flashGradient.addColorStop(1, 'rgba(255, 215, 0, 0)');
+                    ctx.fillStyle = flashGradient;
+                    ctx.fillRect(0, 0, width, height);
+                    flashAlpha -= 0.015;
+                }
+                while (particles.length > 400) particles.shift();
+
+                for (let i = 0; i < particles.length; i++) {
+                    const p = particles[i];
+                    p.vx *= p.drag; p.vy *= p.drag; p.vy += p.gravity;
+                    p.x += p.vx; p.y += p.vy;
+                    p.alpha -= 0.004; p.rotation += p.rotSpeed;
+                    p.scale += p.scaleSpeed * 0.8; 
+                    p.scale = Math.min(1.3, Math.max(0.7, p.scale));
+                    p.trail.push({ x: p.x, y: p.y, alpha: p.alpha * 0.5 });
+                    if (p.trail.length > 2) p.trail.shift();
+
+                    if (p.alpha <= 0 || p.y > height + 50) { particles.splice(i, 1); i--; continue; }
+
+                    ctx.save();
+                    ctx.globalAlpha = p.alpha;
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.rotation * Math.PI / 180);
+                    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, p.size * p.scale);
+                    gradient.addColorStop(0, p.color);
+                    gradient.addColorStop(0.5, 'white');
+                    gradient.addColorStop(1, p.color + '80');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -p.size * p.scale);
+                    ctx.lineTo(p.size * p.scale / 2, 0);
+                    ctx.lineTo(0, p.size * p.scale);
+                    ctx.lineTo(-p.size * p.scale / 2, 0);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    ctx.globalAlpha = 0.6;
+                    p.trail.forEach((point, idx) => {
+                        ctx.globalAlpha = point.alpha * (1 - idx * 0.3);
+                        ctx.fillStyle = p.color + '40';
+                        ctx.fillRect(point.x - p.x - 2, point.y - p.y - 2, 4, 4);
+                    });
+                    ctx.restore();
+                }
+                lastTime = currentTime;
+            }
+            if (particles.length > 0 || flashAlpha > 0) animationId = requestAnimationFrame(render);
+            else { ctx.clearRect(0, 0, width, height); cancelAnimationFrame(animationId); }
+        }
+        requestAnimationFrame(render);
+        window.onresize = () => { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; };
+    }
+
+    // === 按钮事件处理 ===
+    const allMoves = ['R', "R'", 'R2', 'U', "U'", 'U2', 'F', "F'", 'F2'];
+    function getRandomMove(lastMoveFace) {
+        let choices = allMoves.filter(m => m[0] !== lastMoveFace);
+        return choices[Math.floor(Math.random() * choices.length)];
+    }
+
+    scrambleBtn.addEventListener('click', async () => {
+        if(isAnimating) return;
+        if (!checkAllFilled()) {
+            // 自动填充初始颜色
+            const allTiles = document.querySelectorAll('.sticker');
+            allTiles.forEach(t => {
+                const idx = t.dataset.index;
+                const c = initialColors[idx];
+                t.dataset.color = c;
+                t.className = 'sticker color-' + c;
+                t.classList.remove('fixed');
+                if(fixedStickers[idx]) t.classList.add('fixed');
+                logicState[idx] = c;
+            });
+            checkAllFilled();
+        }
+
+        isAnimating = true;
+        scrambleBtn.disabled = true; solveBtn.disabled = true; resetBtn.disabled = true;
+        resultDiv.textContent = "正在随机打乱...";
+        
+        let lastFace = null;
+        const MOVE_COUNT = 15;
+        const SCRAMBLE_SPEED = 100;
+        for(let i=0; i<MOVE_COUNT; i++) {
+            let move = getRandomMove(lastFace);
+            lastFace = move[0];
+            statusDiv.textContent = `打乱中: ${move} (${i+1}/${MOVE_COUNT})`;
+            await animateMove(move, SCRAMBLE_SPEED);
+            logicState = applyLogicMove(logicState, move);
+        }
+        resultDiv.textContent = "打乱完成。点击“求解魔方”开始还原。";
+        statusDiv.textContent = "";
+        isAnimating = false;
+        scrambleBtn.disabled = false; resetBtn.disabled = false; solveBtn.disabled = false;
+    });
+
+    function capturePiecesSnapshot() {
+        const snap = [];
+        Object.keys(pieces).forEach(pos => {
+            const p = pieces[pos];
+            snap.push({ ref: p, pos: p.pos, rot: { x: p.rot.x, y: p.rot.y, z: p.rot.z, w: p.rot.w } });
+        });
+        return snap;
+    }
+
+    function restorePiecesSnapshot(snap) {
+        if (!snap) return;
+        animationStop = true;
+        isAnimating = false;
+        const rotators = cube.querySelectorAll('.rotator');
+        rotators.forEach(r => { if (r.parentNode === cube) cube.removeChild(r); });
+
+        const newMap = {};
+        snap.forEach(s => {
+            const p = s.ref;
+            p.pos = s.pos;
+            p.rot = { x: s.rot.x, y: s.rot.y, z: s.rot.z, w: s.rot.w };
+            if (p.el.parentNode !== cube) cube.appendChild(p.el);
+            updatePieceTransform(p);
+            newMap[s.pos] = p;
+        });
+        Object.keys(pieces).forEach(k => { delete pieces[k]; });
+        Object.keys(newMap).forEach(k => { pieces[k] = newMap[k]; });
+        Object.keys(pieces).forEach(k => {
+            const p = pieces[k];
+            p.el.style.transition = ''; p.inner.style.transition = '';
+        });
+    }
+
+    async function playSolution(steps, stepIntervalMs) {
+        isAnimating = true; animationStop = false;
+        solveBtn.disabled = true; replayBtn.disabled = true; scrambleBtn.disabled = true;
+        colorPalette.style.pointerEvents = 'none';
+        
+        for (let i = 0; i < steps.length; i++) {
+            if (animationStop) break;
+            const m = steps[i];
+            statusDiv.textContent = '执行: ' + m + ' (' + (i + 1) + '/' + steps.length + ')';
+            await animateMove(m, FACE_ROTATE_MS);
+            logicState = applyLogicMove(logicState, m);
+            if (stepIntervalMs > 0) await delay(Math.max(0, stepIntervalMs * 1000 - FACE_ROTATE_MS));
+        }
+        if (!animationStop) {
+            statusDiv.textContent = '还原完成';
+            celebrate();
+        }
+        isAnimating = false;
+        replayBtn.disabled = !lastAnimationSteps;
+        scrambleBtn.disabled = false;
+        colorPalette.style.pointerEvents = '';
+        checkAllFilled();
+    }
+
+    async function rotateToStartView() {
+        statusDiv.textContent = "正在调整视角...";
+        cube.style.transition = 'transform 1500ms ease-in-out';
+        currentRotateX = -25; currentRotateY = -35;
+        updateCubeRotationCSS(); 
+        await delay(1500);
+        cube.style.transition = '';
+        statusDiv.textContent = "就绪，准备开始...";
+        await delay(500);
+    }
+
+    solveBtn.addEventListener('click', async () => {
+        if (isAnimating) return;
+        resultDiv.textContent = '正在计算...';
+        solveBtn.disabled = true; replayBtn.disabled = true; scrambleBtn.disabled = true;
+
+        try {
+            const response = await fetch('/solve', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ cube: getLogicCubeState() }) 
+            });
+            
+            if (!response.ok) throw new Error('网络错误: ' + response.status);
+            const data = await response.json();
+            
+            if (data.error) {
+                resultDiv.textContent = data.error;
+                lastAnimationSteps = null; savedInitialPieces = null;
+            } else if (data.steps === null) {
+                resultDiv.textContent = '无解。请检查魔方填色是否正确。';
+                lastAnimationSteps = null; savedInitialPieces = null;
+            } else if (data.steps.length === 0) {
+                resultDiv.textContent = '魔方已在复原状态。';
+                celebrate();
+            } else {
+                resultDiv.textContent = '解法步骤 (' + data.steps.length + '步)：\n' + data.steps.join(' ');
+                savedInitialPieces = capturePiecesSnapshot();
+                lastAnimationSteps = data.steps.slice();
+                
+                let intervalVal = parseFloat(intervalInput.value);
+                if(isNaN(intervalVal) || intervalVal < 0) intervalVal = 0;
+                
+                await rotateToStartView();
+                await playSolution(lastAnimationSteps, intervalVal);
+            }
+        } catch (err) {
+            resultDiv.textContent = '异常：' + err.message;
+        } finally {
+            scrambleBtn.disabled = false;
+            checkAllFilled();
+            if(lastAnimationSteps) replayBtn.disabled = false;
+        }
+    });
+
+    replayBtn.addEventListener('click', async () => {
+        if (isAnimating) return;
+        if (!savedInitialPieces || !lastAnimationSteps) return;
+        restorePiecesSnapshot(savedInitialPieces);
+        let intervalVal = parseFloat(intervalInput.value);
+        await rotateToStartView();
+        await playSolution(lastAnimationSteps, intervalVal);
+    });
+
+    resetBtn.addEventListener('click', () => { window.location.reload(); });
+    window.addEventListener('resize', setupSizes);
+
+    // 启动
+    setupSizes();
+    initializeCube3D();
+    setupSizes(); 
+    checkAllFilled();
+})();
+</script>
+</body>
+</html>
